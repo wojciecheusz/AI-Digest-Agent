@@ -1,0 +1,36 @@
+name: Dzienna pigułka AI
+
+# Uruchamia sie codziennie oraz na zadanie (przycisk "Run workflow").
+on:
+  schedule:
+    # Cron w GitHub Actions jest w UTC.
+    # 06:00 UTC = 07:00 czasu warszawskiego zima / 08:00 latem (uwaga na DST).
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}   # reczne uruchomienie z zakladki Actions
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Ustaw Pythona
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Zainstaluj zaleznosci
+        run: pip install -r requirements.txt
+
+      - name: Wyslij pigulke
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DIGEST_LANGUAGE: "polski"
+          LOOKBACK_HOURS: "24"
+          OPENAI_MODEL: "gpt-5.5"
+          OPENAI_REASONING_EFFORT: "low"
+        run: python daily_ai_digest.py
