@@ -9,6 +9,18 @@ Automatyczny agent, który raz dziennie zbiera najważniejsze wiadomości ze św
 3. **Streszczenie** — przekazuje wpisy do modelu, który wybiera 6–10 najważniejszych pozycji i zwraca ustrukturyzowany JSON.
 4. **Wysyłka** — formatuje pigułkę w Slack Block Kit i publikuje przez Incoming Webhook.
 
+## Uruchom własną kopię (fork)
+
+Chcesz mieć tego agenta u siebie? Wszystko dzieje się w Twoim własnym repo — nie potrzebujesz serwera.
+
+1. Kliknij **Fork** (prawy górny róg) — dostaniesz własną kopię repo.
+2. W swoim forku wejdź w *Settings → Secrets and variables → Actions* i dodaj dwa sekrety:
+   - `OPENAI_API_KEY` — Twój klucz API,
+   - `SLACK_WEBHOOK_URL` — Twój Slack Incoming Webhook ([jak go utworzyć](https://api.slack.com/messaging/webhooks)).
+3. Wejdź w zakładkę *Actions*, wybierz **Dzienna pigułka AI** i kliknij **Run workflow**, żeby przetestować. Dalej poleci codziennie o 06:00 UTC.
+
+Ustawienia (język, okno czasowe, model, źródła RSS) dostosujesz zmiennymi środowiskowymi i listą `FEEDS` — szczegóły niżej.
+
 ## Struktura
 
 ```
