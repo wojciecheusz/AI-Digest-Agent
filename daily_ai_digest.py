@@ -38,31 +38,39 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 DIGEST_LANGUAGE = os.environ.get("DIGEST_LANGUAGE", "polski")
 LOOKBACK_HOURS = int(os.environ.get("LOOKBACK_HOURS", "24"))
-MAX_ITEMS_TO_MODEL = int(os.environ.get("MAX_ITEMS_TO_MODEL", "60"))
+MAX_ITEMS_TO_MODEL = int(os.environ.get("MAX_ITEMS_TO_MODEL", "80"))
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5")
 OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "low")
 
 # Zrodla RSS. Klucz "waga" jest tylko informacyjny (badania vs produkt).
 # Smialo dodawaj/usuwaj wpisy - martwe feedy sa pomijane, nie wywalaja skryptu.
 FEEDS = [
-    # --- Badania / papers ---
+    # --- Liderzy rynku / laboratoria (premiery modeli, produkty, zapowiedzi) ---
+    {"name": "OpenAI News",        "url": "https://openai.com/news/rss.xml"},
+    {"name": "Google DeepMind",    "url": "https://deepmind.google/blog/rss.xml"},
+    {"name": "Hugging Face Blog",  "url": "https://huggingface.co/blog/feed.xml"},
+    {"name": "NVIDIA Blog",        "url": "https://blogs.nvidia.com/feed/"},
+    {"name": "Microsoft AI Blog",  "url": "https://blogs.microsoft.com/ai/feed/"},
+    {"name": "Meta AI",            "url": "https://ai.meta.com/blog/rss/"},
+    # --- Branża / newsy / analizy (popularne, szeroki odbiorca) ---
+    {"name": "The Batch",          "url": "https://www.deeplearning.ai/the-batch/feed/"},
+    {"name": "Import AI",          "url": "https://importai.substack.com/feed"},
+    {"name": "The Decoder",        "url": "https://the-decoder.com/feed/"},
+    {"name": "TechCrunch AI",      "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
+    {"name": "VentureBeat AI",     "url": "https://venturebeat.com/category/ai/feed/"},
+    {"name": "The Verge AI",       "url": "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml"},
+    {"name": "Wired AI",           "url": "https://www.wired.com/feed/tag/ai/latest/rss"},
+    {"name": "Ars Technica AI",    "url": "https://arstechnica.com/ai/feed/"},
+    {"name": "MIT Tech Review AI", "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed"},
+    {"name": "Simon Willison",     "url": "https://simonwillison.net/atom/everything/"},
+    {"name": "Hacker News (front)","url": "https://hnrss.org/frontpage?points=100"},
+    {"name": "r/LocalLLaMA",       "url": "https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day"},
+    # --- Badania / papers (uwzglednij wybiorczo, opisuj przystepnie) ---
     {"name": "arXiv cs.AI",        "url": "http://export.arxiv.org/rss/cs.AI"},
     {"name": "arXiv cs.LG",        "url": "http://export.arxiv.org/rss/cs.LG"},
     {"name": "arXiv cs.CL",        "url": "http://export.arxiv.org/rss/cs.CL"},
-    {"name": "Hugging Face Blog",  "url": "https://huggingface.co/blog/feed.xml"},
-    {"name": "Google DeepMind",    "url": "https://deepmind.google/blog/rss.xml"},
     {"name": "Google Research",    "url": "https://research.google/blog/rss/"},
     {"name": "BAIR (Berkeley)",    "url": "https://bair.berkeley.edu/blog/feed.xml"},
-    # --- Produkty / biznes / newsy ---
-    {"name": "OpenAI News",        "url": "https://openai.com/news/rss.xml"},
-    {"name": "The Batch",          "url": "https://www.deeplearning.ai/the-batch/feed/"},
-    {"name": "Import AI",          "url": "https://importai.substack.com/feed"},
-    {"name": "TechCrunch AI",      "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
-    {"name": "VentureBeat AI",     "url": "https://venturebeat.com/category/ai/feed/"},
-    {"name": "MIT Tech Review AI", "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed"},
-    {"name": "Hacker News (front)","url": "https://hnrss.org/frontpage?points=100"},
-    {"name": "r/MachineLearning",  "url": "https://www.reddit.com/r/MachineLearning/top/.rss?t=day"},
-    {"name": "r/LocalLLaMA",       "url": "https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day"},
 ]
 
 USER_AGENT = "Mozilla/5.0 (compatible; DailyAIDigestBot/1.0; +https://example.com)"
@@ -115,7 +123,7 @@ def fetch_feed(feed: dict, cutoff: datetime) -> list[dict]:
             "source": feed["name"],
             "title": title,
             "url": entry.get("link", ""),
-            "summary": _clean_text(entry.get("summary", entry.get("description", "")), 400),
+            "summary": _clean_text(entry.get("summary", entry.get("description", "")), 700),
             "published": published.isoformat() if published else "",
         })
     print(f"  [ok] {feed['name']}: {len(items)} wpisow", file=sys.stderr)
@@ -163,25 +171,25 @@ def dedupe(items: list[dict]) -> list[dict]:
 # 3. Streszczenie przez Claude
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """Jesteś redaktorem dziennego briefingu o AI, machine learning i pokrewnych dziedzinach.
-Dostajesz surową listę wpisów (tytuł, źródło, opis, link) z ostatniej doby.
+SYSTEM_PROMPT = """Jesteś redaktorem dziennego briefingu o AI i całej branży technologicznej wokół niej.
+Dostajesz surową listę wpisów (tytuł, źródło, opis, link) z ostatniej doby — od publikacji naukowych po newsy produktowe i biznesowe.
 
 Twoje zadanie:
-- Wybierz od 6 do 10 NAJWAŻNIEJSZYCH i najciekawszych rzeczy. Odsiej szum, drobne aktualizacje i clickbait.
-- Zadbaj o różnorodność: badania (papers), modele/produkty, biznes/branża, narzędzia open source.
-- Dla każdej pozycji napisz zwięzłe, konkretne streszczenie (1-2 zdania) + jedno zdanie "dlaczego to ważne".
-- Grupuj podobne wątki, nie powielaj tej samej wiadomości.
-- Pisz w języku: {language}. Ton: rzeczowy, zwięzły, bez lania wody i bez marketingowego żargonu.
+- Wybierz od 8 do 12 NAJWAŻNIEJSZYCH rzeczy. Odsiej szum, drobne aktualizacje i clickbait.
+- WAŻNE — dobór treści: pisz dla osoby zainteresowanej branżą, nie tylko dla naukowca. Priorytet mają: ruchy liderów rynku (OpenAI, Anthropic, Google/DeepMind, Meta, Microsoft, NVIDIA, xAI, Mistral, Amazon i in.), premiery i aktualizacje modeli, nowe produkty i funkcje, finansowanie, przejęcia i zatrudnienia, zmiany w regulacjach oraz szersze trendy w branży. Przełomowe badania nadal uwzględniaj, ale opisuj je przystępnie (co z nich wynika w praktyce) i pomijaj wąskie, czysto techniczne papers bez szerszego znaczenia. Docelowo większość pozycji powinna dotyczyć rynku/produktów/branży, a nie samych publikacji naukowych.
+- Zadbaj o różnorodność kategorii i źródeł; grupuj podobne wątki i nie powielaj tej samej wiadomości.
+- Dla każdej pozycji napisz OBSZERNE, konkretne streszczenie: 3–5 zdań, które realnie opisują treść — co dokładnie się wydarzyło, najważniejsze szczegóły i liczby, kto za tym stoi i jaki jest kontekst. Unikaj ogólników i jednozdaniowych skrótów. Dodaj też 1–2 zdania „dlaczego to ważne".
+- Pisz w języku: {language}. Ton: rzeczowy, przystępny i konkretny — bez marketingowego żargonu i bez akademickiego przegadania.
 
 Zwróć WYŁĄCZNIE poprawny JSON (bez ```), w formacie:
 {{
-  "intro": "jedno zdanie podsumowujące dzień",
+  "intro": "1-2 zdania podsumowujące najważniejsze wątki dnia",
   "items": [
     {{
-      "category": "Badania|Modele|Produkty|Biznes|Narzędzia|Inne",
+      "category": "Rynek|Modele|Produkty|Biznes|Badania|Narzędzia|Inne",
       "title": "krótki tytuł",
-      "summary": "1-2 zdania co się wydarzyło",
-      "why": "dlaczego to ważne (jedno zdanie)",
+      "summary": "3-5 zdań opisujących treść",
+      "why": "dlaczego to ważne (1-2 zdania)",
       "url": "link źródłowy"
     }}
   ]
@@ -207,7 +215,7 @@ def summarize(items: list[dict]) -> dict:
     # (nie wszystkie modele go wspieraja - pusta wartosc = pomijamy).
     kwargs = dict(
         model=OPENAI_MODEL,
-        max_completion_tokens=3000,
+        max_completion_tokens=6000,
         response_format={"type": "json_object"},  # tryb JSON - pewne parsowanie
         messages=[
             {"role": "developer", "content": SYSTEM_PROMPT.format(language=DIGEST_LANGUAGE)},
@@ -232,7 +240,7 @@ def summarize(items: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 CATEGORY_EMOJI = {
-    "Badania": "🔬", "Modele": "🧠", "Produkty": "🚀",
+    "Rynek": "📈", "Badania": "🔬", "Modele": "🧠", "Produkty": "🚀",
     "Biznes": "💼", "Narzędzia": "🛠️", "Inne": "📌",
 }
 
