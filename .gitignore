@@ -1,0 +1,21 @@
+# Sekrety
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Systemowe / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
