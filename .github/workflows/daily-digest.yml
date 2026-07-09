@@ -3,10 +3,9 @@ name: Dzienna pigułka AI
 # Uruchamia sie codziennie oraz na zadanie (przycisk "Run workflow").
 on:
   schedule:
-    # Cron w GitHub Actions jest w UTC.
-    # 06:00 UTC = 07:00 czasu warszawskiego zima / 08:00 latem (uwaga na DST).
-    - cron: "0 6 * * *"
-  workflow_dispatch: {}   # reczne uruchomienie z zakladki Actions
+    - cron: "17 7 * * *"
+      timezone: "Europe/Warsaw"   # = 7:17 czasu warszawskiego przez cały rok
+  workflow_dispatch: {}
 
 jobs:
   digest:
