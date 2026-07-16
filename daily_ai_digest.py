@@ -168,6 +168,7 @@ Twoje zadanie:
 - Wybierz od 8 do 12 NAJWAŻNIEJSZYCH rzeczy. Odsiej szum, drobne aktualizacje i clickbait.
 - WAŻNE — dobór treści: pisz dla osoby zainteresowanej branżą, nie tylko dla naukowca. Priorytet mają: ruchy liderów rynku (OpenAI, Anthropic, Google/DeepMind, Meta, Microsoft, NVIDIA, xAI, Mistral, Amazon i in.), premiery i aktualizacje modeli, nowe produkty i funkcje, finansowanie, przejęcia i zatrudnienia, zmiany w regulacjach oraz szersze trendy w branży. Przełomowe badania nadal uwzględniaj, ale opisuj je przystępnie (co z nich wynika w praktyce) i pomijaj wąskie, czysto techniczne papers bez szerszego znaczenia. Docelowo większość pozycji powinna dotyczyć rynku/produktów/branży, a nie samych publikacji naukowych.
 - Zadbaj o różnorodność kategorii i źródeł; grupuj podobne wątki i nie powielaj tej samej wiadomości.
+- Każdej pozycji przypisz DOKŁADNIE JEDNĄ kategorię z tego zamkniętego zbioru (użyj dokładnie tej pisowni): „Modele i badania", „Produkty i narzędzia", „Biznes i rynek", „Regulacje i społeczeństwo", „Inne". Kategorii „Inne" używaj tylko gdy nic innego nie pasuje.
 - Dla każdej pozycji napisz OBSZERNE, konkretne streszczenie: 3–5 zdań, które realnie opisują treść — co dokładnie się wydarzyło, najważniejsze szczegóły i liczby, kto za tym stoi i jaki jest kontekst. Unikaj ogólników i jednozdaniowych skrótów. Dodaj też 1–2 zdania „dlaczego to ważne".
 - Dla każdej pozycji dodaj też pole "tldr": JEDNO zdanie (maksymalnie 15 wyrazów) z maksymalnie skondensowaną, konkretną informacją z tej pozycji. To zdanie trafi do listy TL;DR na początku pigułki, więc musi samodzielnie nieść sedno newsa. Bez „w tym artykule", bez wielokropków, bez łączenia dwóch newsów.
 - Pisz w języku: {language}. Ton: rzeczowy, przystępny i konkretny — bez marketingowego żargonu i bez akademickiego przegadania.
@@ -177,7 +178,7 @@ Zwróć WYŁĄCZNIE poprawny JSON (bez ```), w formacie:
   "intro": "1-2 zdania podsumowujące najważniejsze wątki dnia",
   "items": [
     {{
-      "category": "Rynek|Modele|Produkty|Biznes|Badania|Narzędzia|Inne",
+      "category": "Modele i badania|Produkty i narzędzia|Biznes i rynek|Regulacje i społeczeństwo|Inne",
       "title": "krótki tytuł",
       "tldr": "jedno zdanie, max 15 wyrazów, sedno newsa",
       "summary": "3-5 zdań opisujących treść",
@@ -231,10 +232,35 @@ def summarize(items: list[dict]) -> dict:
 # 4. Wysylka na Slacka (Block Kit)
 # ---------------------------------------------------------------------------
 
+# Kolejnosc, w jakiej kategorie pojawiaja sie w poscie (i w TL;DR).
+CATEGORY_ORDER = [
+    "Modele i badania",
+    "Produkty i narzędzia",
+    "Biznes i rynek",
+    "Regulacje i społeczeństwo",
+    "Inne",
+]
+
 CATEGORY_EMOJI = {
-    "Rynek": "📈", "Badania": "🔬", "Modele": "🧠", "Produkty": "🚀",
-    "Biznes": "💼", "Narzędzia": "🛠️", "Inne": "📌",
+    "Modele i badania": "🧠",
+    "Produkty i narzędzia": "🚀",
+    "Biznes i rynek": "💼",
+    "Regulacje i społeczeństwo": "⚖️",
+    "Inne": "📌",
 }
+
+
+def group_by_category(items: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Grupuje pozycje wg CATEGORY_ORDER (nieznane kategorie -> 'Inne').
+    Zwraca liste (kategoria, pozycje) tylko dla niepustych grup, w ustalonej
+    kolejnosci. Kolejnosc pozycji wewnatrz grupy zachowana z wejscia."""
+    buckets: dict[str, list[dict]] = {cat: [] for cat in CATEGORY_ORDER}
+    for it in items:
+        cat = it.get("category", "").strip()
+        if cat not in buckets:
+            cat = "Inne"
+        buckets[cat].append(it)
+    return [(cat, buckets[cat]) for cat in CATEGORY_ORDER if buckets[cat]]
 
 
 def build_slack_blocks(digest: dict) -> list[dict]:
@@ -248,12 +274,14 @@ def build_slack_blocks(digest: dict) -> list[dict]:
         blocks.append({"type": "section",
                        "text": {"type": "mrkdwn", "text": f"_{intro}_"}})
 
-    items = digest.get("items", [])
+    # Grupujemy pozycje wg kategorii; ta sama kolejnosc obowiazuje
+    # zarowno w TL;DR, jak i w czesci szczegolowej ponizej.
+    grouped = group_by_category(digest.get("items", []))
+    ordered_items = [it for _, group in grouped for it in group]
 
-    # Sekcja TL;DR: po jednym krotkim zdaniu (max ~15 wyrazow) na kazdy artykul,
-    # w tej samej kolejnosci co szczegolowe pozycje ponizej.
+    # Sekcja TL;DR: po jednym krotkim zdaniu (max ~15 wyrazow) na kazdy artykul.
     tldr_lines = []
-    for it in items:
+    for it in ordered_items:
         line = it.get("tldr", "").strip() or it.get("title", "").strip()
         if line:
             tldr_lines.append(f"• {line}")
@@ -264,20 +292,24 @@ def build_slack_blocks(digest: dict) -> list[dict]:
 
     blocks.append({"type": "divider"})
 
-    for it in items:
-        emoji = CATEGORY_EMOJI.get(it.get("category", "Inne"), "📌")
-        title = it.get("title", "").strip()
-        url = it.get("url", "").strip()
-        summary = it.get("summary", "").strip()
-        why = it.get("why", "").strip()
+    # Czesc szczegolowa: pozycje pogrupowane pod naglowkiem kategorii.
+    for category, group in grouped:
+        emoji = CATEGORY_EMOJI.get(category, "📌")
+        blocks.append({"type": "header",
+                       "text": {"type": "plain_text", "text": f"{emoji} {category}"}})
+        for it in group:
+            title = it.get("title", "").strip()
+            url = it.get("url", "").strip()
+            summary = it.get("summary", "").strip()
+            why = it.get("why", "").strip()
 
-        title_line = f"*<{url}|{title}>*" if url else f"*{title}*"
-        text = f"{emoji} {title_line}\n{summary}"
-        if why:
-            text += f"\n> _Dlaczego ważne:_ {why}"
-        # Slack: limit ~3000 znakow na sekcje
-        blocks.append({"type": "section",
-                       "text": {"type": "mrkdwn", "text": text[:2900]}})
+            title_line = f"*<{url}|{title}>*" if url else f"*{title}*"
+            text = f"{title_line}\n{summary}"
+            if why:
+                text += f"\n> _Dlaczego ważne:_ {why}"
+            # Slack: limit ~3000 znakow na sekcje
+            blocks.append({"type": "section",
+                           "text": {"type": "mrkdwn", "text": text[:2900]}})
 
     blocks.append({
         "type": "context",
