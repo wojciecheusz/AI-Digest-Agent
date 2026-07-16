@@ -39,8 +39,15 @@ SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 DIGEST_LANGUAGE = os.environ.get("DIGEST_LANGUAGE", "polski")
 LOOKBACK_HOURS = int(os.environ.get("LOOKBACK_HOURS", "24"))
 MAX_ITEMS_TO_MODEL = int(os.environ.get("MAX_ITEMS_TO_MODEL", "80"))
+MAX_PER_FEED = int(os.environ.get("MAX_PER_FEED", "8"))          # cap wpisow na jedno zrodlo
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5")
 OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "low")
+MODEL_MAX_RETRIES = int(os.environ.get("MODEL_MAX_RETRIES", "3"))  # ponawianie wywolania modelu
+
+# Historia wyslanych artykulow (dedup miedzy biegami). Plik trzymany w cache
+# GitHub Actions - patrz krok "Przywroc historie wyslanych" w workflow.
+SENT_HISTORY_FILE = os.environ.get("SENT_HISTORY_FILE", ".state/sent.json")
+SENT_HISTORY_DAYS = int(os.environ.get("SENT_HISTORY_DAYS", "7"))
 
 # Zrodla RSS - wyselekcjonowana dwunastka (jakosc + roznorodnosc rol).
 # Smialo dodawaj/usuwaj wpisy - martwe feedy sa pomijane, nie wywalaja skryptu.
@@ -139,13 +146,19 @@ def _norm(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
 
 
+def _url_key(url: str) -> str:
+    """Kanoniczny klucz URL (bez parametrow i koncowego /) - uzywany do
+    deduplikacji, historii wyslanych i mapowania zrodel."""
+    return (url or "").split("?")[0].rstrip("/")
+
+
 def dedupe(items: list[dict]) -> list[dict]:
     """Usuwa duplikaty po URL i po znormalizowanym tytule."""
     seen_urls: set[str] = set()
     seen_titles: set[str] = set()
     out = []
     for it in items:
-        url_key = it["url"].split("?")[0].rstrip("/")
+        url_key = _url_key(it.get("url", ""))
         title_key = _norm(it["title"])
         if url_key and url_key in seen_urls:
             continue
@@ -155,6 +168,70 @@ def dedupe(items: list[dict]) -> list[dict]:
         seen_titles.add(title_key)
         out.append(it)
     return out
+
+
+# ---------------------------------------------------------------------------
+# 2b. Historia wyslanych (dedup miedzy biegami) + sprawiedliwy dobor wejscia
+# ---------------------------------------------------------------------------
+
+def load_sent_history(path: str) -> dict:
+    """Wczytuje {url_key: 'YYYY-MM-DD'} i przycina wpisy starsze niz
+    SENT_HISTORY_DAYS. Brak/uszkodzony plik = pusta historia."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=SENT_HISTORY_DAYS)).date().isoformat()
+    # Daty w formacie ISO (YYYY-MM-DD) porownuja sie poprawnie leksykalnie.
+    return {k: v for k, v in data.items() if isinstance(v, str) and v >= cutoff}
+
+
+def save_sent_history(path: str, history: dict) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(history, f, ensure_ascii=False, sort_keys=True)
+
+
+def filter_unseen(items: list[dict], history: dict) -> list[dict]:
+    """Odrzuca wpisy, ktorych URL byl juz wyslany w oknie historii."""
+    return [it for it in items if _url_key(it.get("url", "")) not in history]
+
+
+def select_for_model(items: list[dict]) -> list[dict]:
+    """Ogranicza liczbe wpisow na zrodlo (MAX_PER_FEED) i przeplata zrodla
+    round-robin, zeby zadne pojedyncze zrodlo nie zdominowalo puli i zeby
+    zrodla z konca listy nie wypadaly przed cieciem do MAX_ITEMS_TO_MODEL."""
+    by_source: dict[str, list[dict]] = {}
+    for it in items:
+        by_source.setdefault(it.get("source", "?"), []).append(it)
+    for src in by_source:
+        by_source[src] = by_source[src][:MAX_PER_FEED]
+
+    out: list[dict] = []
+    idx = 0
+    while True:
+        added = False
+        for lst in by_source.values():
+            if idx < len(lst):
+                out.append(lst[idx])
+                added = True
+        if not added:
+            break
+        idx += 1
+    return out[:MAX_ITEMS_TO_MODEL]
+
+
+def attach_sources(digest: dict, source_map: dict) -> None:
+    """Uzupelnia pole 'source' w pozycjach digestu na podstawie mapy
+    url_key -> source zbudowanej z pobranych wpisow (bez ufania modelowi)."""
+    for it in digest.get("items", []):
+        if not it.get("source"):
+            src = source_map.get(_url_key(it.get("url", "")))
+            if src:
+                it["source"] = src
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +266,14 @@ Zwróć WYŁĄCZNIE poprawny JSON (bez ```), w formacie:
 }}"""
 
 
+def _valid_digest(data) -> bool:
+    """Minimalna walidacja struktury odpowiedzi modelu."""
+    return (isinstance(data, dict)
+            and isinstance(data.get("items"), list)
+            and len(data["items"]) > 0
+            and all(isinstance(it, dict) for it in data["items"]))
+
+
 def summarize(items: list[dict]) -> dict:
     client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -218,14 +303,23 @@ def summarize(items: list[dict]) -> dict:
     if OPENAI_REASONING_EFFORT.strip():
         kwargs["reasoning_effort"] = OPENAI_REASONING_EFFORT.strip()
 
-    resp = client.chat.completions.create(**kwargs)
-    text = (resp.choices[0].message.content or "").strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        print("BLAD: model nie zwrocil poprawnego JSON. Surowa odpowiedz:\n" + text,
-              file=sys.stderr)
-        raise
+    # Ponawiamy wywolanie przy bledzie API / niepoprawnym lub pustym JSON.
+    last_err = None
+    for attempt in range(1, MODEL_MAX_RETRIES + 1):
+        try:
+            resp = client.chat.completions.create(**kwargs)
+            text = (resp.choices[0].message.content or "").strip()
+            data = json.loads(text)
+            if not _valid_digest(data):
+                raise ValueError("odpowiedz nie zawiera poprawnej, niepustej listy 'items'")
+            return data
+        except Exception as exc:  # noqa: BLE001 - lapiemy, by ponowic probe
+            last_err = exc
+            print(f"  [proba {attempt}/{MODEL_MAX_RETRIES}] blad modelu: {exc}",
+                  file=sys.stderr)
+            if attempt < MODEL_MAX_RETRIES:
+                time.sleep(2 * attempt)  # prosty backoff: 2s, 4s, ...
+    raise RuntimeError(f"Model zawiodl po {MODEL_MAX_RETRIES} probach: {last_err}")
 
 
 # ---------------------------------------------------------------------------
@@ -279,12 +373,15 @@ def build_slack_blocks(digest: dict) -> list[dict]:
     grouped = group_by_category(digest.get("items", []))
     ordered_items = [it for _, group in grouped for it in group]
 
-    # Sekcja TL;DR: po jednym krotkim zdaniu (max ~15 wyrazow) na kazdy artykul.
+    # Sekcja TL;DR: po jednym krotkim zdaniu (max ~15 wyrazow) na kazdy artykul,
+    # podlinkowanym do artykulu (jeden klik prosto do tekstu).
     tldr_lines = []
     for it in ordered_items:
-        line = it.get("tldr", "").strip() or it.get("title", "").strip()
-        if line:
-            tldr_lines.append(f"• {line}")
+        sentence = it.get("tldr", "").strip() or it.get("title", "").strip()
+        if not sentence:
+            continue
+        url = it.get("url", "").strip()
+        tldr_lines.append(f"• <{url}|{sentence}>" if url else f"• {sentence}")
     if tldr_lines:
         tldr_text = "*⚡ TL;DR*\n" + "\n".join(tldr_lines)
         blocks.append({"type": "section",
@@ -302,8 +399,11 @@ def build_slack_blocks(digest: dict) -> list[dict]:
             url = it.get("url", "").strip()
             summary = it.get("summary", "").strip()
             why = it.get("why", "").strip()
+            source = it.get("source", "").strip()
 
             title_line = f"*<{url}|{title}>*" if url else f"*{title}*"
+            if source:
+                title_line += f"  _via {source}_"
             text = f"{title_line}\n{summary}"
             if why:
                 text += f"\n> _Dlaczego ważne:_ {why}"
@@ -334,6 +434,19 @@ def post_to_slack(digest: dict) -> None:
     print("Wyslano na Slacka.", file=sys.stderr)
 
 
+def post_failure_notice(reason: str) -> None:
+    """Krotki komunikat awaryjny na kanal, gdy pigulka nie powstala -
+    lepsze niz cicha porazka. Bledy wysylki celowo ignorujemy."""
+    try:
+        requests.post(
+            SLACK_WEBHOOK_URL,
+            json={"text": f"⚠️ Dzienna pigułka AI nie powstała dziś: {reason}"},
+            timeout=30,
+        )
+    except Exception:  # noqa: BLE001 - nie maskujemy oryginalnego bledu
+        pass
+
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -354,9 +467,51 @@ def main() -> int:
         print("Brak wpisow w oknie czasowym - nic nie wysylam.", file=sys.stderr)
         return 0
 
-    digest = summarize(items)
+    # Mapa url -> zrodlo (do atrybucji pozycji w poscie).
+    source_map = {_url_key(it.get("url", "")): it.get("source", "")
+                  for it in items if it.get("url")}
+
+    # Tweak #1: odfiltruj artykuly juz wyslane w ostatnich dniach.
+    # SENT_HISTORY_DAYS=0 wylacza dedup miedzy biegami (przydatne przy testach).
+    history: dict = {}
+    if SENT_HISTORY_DAYS > 0:
+        history = load_sent_history(SENT_HISTORY_FILE)
+        before = len(items)
+        items = filter_unseen(items, history)
+        print(f"Po odfiltrowaniu juz wyslanych: {len(items)} (pominieto {before - len(items)}).",
+              file=sys.stderr)
+        if not items:
+            print("Nic nowego wzgledem ostatnich dni - nic nie wysylam.", file=sys.stderr)
+            return 0
+
+    # Tweak #3: sprawiedliwy dobor wejscia (cap na zrodlo + przeplatanie).
+    selected = select_for_model(items)
+    print(f"Do modelu: {len(selected)} wpisow (max {MAX_PER_FEED}/zrodlo).", file=sys.stderr)
+
+    # Tweak #2: przy trwalym bledzie modelu nie milczymy - dajemy znac na kanal.
+    try:
+        digest = summarize(selected)
+    except Exception as exc:  # noqa: BLE001
+        print(f"BLAD: {exc}", file=sys.stderr)
+        post_failure_notice(str(exc)[:300])
+        return 1
+
     print(f"Model wybral {len(digest.get('items', []))} pozycji.", file=sys.stderr)
+
+    # Tweak #4: uzupelnij zrodla na podstawie mapy (bez ufania modelowi).
+    attach_sources(digest, source_map)
+
     post_to_slack(digest)
+
+    # Tweak #1: zapisz wyslane URL-e do historii (na kolejne biegi).
+    if SENT_HISTORY_DAYS > 0:
+        today = datetime.now(timezone.utc).date().isoformat()
+        for it in digest.get("items", []):
+            key = _url_key(it.get("url", ""))
+            if key:
+                history[key] = today
+        save_sent_history(SENT_HISTORY_FILE, history)
+        print(f"Historia wyslanych: {len(history)} URL-i.", file=sys.stderr)
     return 0
 
 

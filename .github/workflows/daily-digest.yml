@@ -31,6 +31,17 @@ jobs:
       - name: Zainstaluj zaleznosci
         run: pip install -r requirements.txt
 
+      # Historia wyslanych artykulow (dedup miedzy biegami). Klucz z run_id jest
+      # zawsze unikalny -> cache zapisuje sie po kazdym biegu, a restore-keys
+      # przywraca najnowszy poprzedni. Osobna historia per galaz (osobne kanaly).
+      - name: Przywroc historie wyslanych
+        uses: actions/cache@v5
+        with:
+          path: .state
+          key: sent-history-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            sent-history-${{ github.ref_name }}-
+
       # Zabezpieczenie: na galezi production wymagamy osobnego sekretu,
       # zeby digest z poprawek nigdy nie trafil przypadkiem na AI_DIGEST.
       - name: Sprawdz konfiguracje kanalu (production)
