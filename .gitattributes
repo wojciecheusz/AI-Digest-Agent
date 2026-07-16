@@ -1,0 +1,21 @@
+# Automatyczna normalizacja koncow linii.
+# W repozytorium wszystkie pliki tekstowe trzymane sa jako LF,
+# a Git sam dobiera koniec linii przy checkoucie na danym systemie.
+* text=auto eol=lf
+
+# Skrypty powloki musza miec LF (inaczej nie zadzialaja na Linux/macOS,
+# w tym w GitHub Actions).
+*.sh   text eol=lf
+
+# Skrypty Windows wymagaja CRLF.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Pliki binarne - bez konwersji.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
