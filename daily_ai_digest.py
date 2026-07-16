@@ -179,6 +179,7 @@ Twoje zadanie:
 - WAŻNE — dobór treści: pisz dla osoby zainteresowanej branżą, nie tylko dla naukowca. Priorytet mają: ruchy liderów rynku (OpenAI, Anthropic, Google/DeepMind, Meta, Microsoft, NVIDIA, xAI, Mistral, Amazon i in.), premiery i aktualizacje modeli, nowe produkty i funkcje, finansowanie, przejęcia i zatrudnienia, zmiany w regulacjach oraz szersze trendy w branży. Przełomowe badania nadal uwzględniaj, ale opisuj je przystępnie (co z nich wynika w praktyce) i pomijaj wąskie, czysto techniczne papers bez szerszego znaczenia. Docelowo większość pozycji powinna dotyczyć rynku/produktów/branży, a nie samych publikacji naukowych.
 - Zadbaj o różnorodność kategorii i źródeł; grupuj podobne wątki i nie powielaj tej samej wiadomości.
 - Dla każdej pozycji napisz OBSZERNE, konkretne streszczenie: 3–5 zdań, które realnie opisują treść — co dokładnie się wydarzyło, najważniejsze szczegóły i liczby, kto za tym stoi i jaki jest kontekst. Unikaj ogólników i jednozdaniowych skrótów. Dodaj też 1–2 zdania „dlaczego to ważne".
+- Dla każdej pozycji dodaj też pole "tldr": JEDNO zdanie (maksymalnie 15 wyrazów) z maksymalnie skondensowaną, konkretną informacją z tej pozycji. To zdanie trafi do listy TL;DR na początku pigułki, więc musi samodzielnie nieść sedno newsa. Bez „w tym artykule", bez wielokropków, bez łączenia dwóch newsów.
 - Pisz w języku: {language}. Ton: rzeczowy, przystępny i konkretny — bez marketingowego żargonu i bez akademickiego przegadania.
 
 Zwróć WYŁĄCZNIE poprawny JSON (bez ```), w formacie:
@@ -188,6 +189,7 @@ Zwróć WYŁĄCZNIE poprawny JSON (bez ```), w formacie:
     {{
       "category": "Rynek|Modele|Produkty|Biznes|Badania|Narzędzia|Inne",
       "title": "krótki tytuł",
+      "tldr": "jedno zdanie, max 15 wyrazów, sedno newsa",
       "summary": "3-5 zdań opisujących treść",
       "why": "dlaczego to ważne (1-2 zdania)",
       "url": "link źródłowy"
@@ -255,9 +257,24 @@ def build_slack_blocks(digest: dict) -> list[dict]:
     if intro:
         blocks.append({"type": "section",
                        "text": {"type": "mrkdwn", "text": f"_{intro}_"}})
+
+    items = digest.get("items", [])
+
+    # Sekcja TL;DR: po jednym krotkim zdaniu (max ~15 wyrazow) na kazdy artykul,
+    # w tej samej kolejnosci co szczegolowe pozycje ponizej.
+    tldr_lines = []
+    for it in items:
+        line = it.get("tldr", "").strip() or it.get("title", "").strip()
+        if line:
+            tldr_lines.append(f"• {line}")
+    if tldr_lines:
+        tldr_text = "*⚡ TL;DR*\n" + "\n".join(tldr_lines)
+        blocks.append({"type": "section",
+                       "text": {"type": "mrkdwn", "text": tldr_text[:2900]}})
+
     blocks.append({"type": "divider"})
 
-    for it in digest.get("items", []):
+    for it in items:
         emoji = CATEGORY_EMOJI.get(it.get("category", "Inne"), "📌")
         title = it.get("title", "").strip()
         url = it.get("url", "").strip()
