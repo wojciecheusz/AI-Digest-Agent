@@ -42,35 +42,25 @@ MAX_ITEMS_TO_MODEL = int(os.environ.get("MAX_ITEMS_TO_MODEL", "80"))
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5")
 OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "low")
 
-# Zrodla RSS. Klucz "waga" jest tylko informacyjny (badania vs produkt).
+# Zrodla RSS - wyselekcjonowana dwunastka (jakosc + roznorodnosc rol).
 # Smialo dodawaj/usuwaj wpisy - martwe feedy sa pomijane, nie wywalaja skryptu.
 FEEDS = [
-    # --- Liderzy rynku / laboratoria (premiery modeli, produkty, zapowiedzi) ---
+    # --- Pierwsze zrodlo: laboratoria (premiery modeli i produktow wprost) ---
     {"name": "OpenAI News",        "url": "https://openai.com/news/rss.xml"},
     {"name": "Google DeepMind",    "url": "https://deepmind.google/blog/rss.xml"},
-    {"name": "Hugging Face Blog",  "url": "https://huggingface.co/blog/feed.xml"},
-    {"name": "NVIDIA Blog",        "url": "https://blogs.nvidia.com/feed/"},
-    {"name": "Microsoft AI Blog",  "url": "https://blogs.microsoft.com/ai/feed/"},
-    {"name": "Meta AI",            "url": "https://ai.meta.com/blog/rss/"},
-    # --- Branża / newsy / analizy (popularne, szeroki odbiorca) ---
+    # --- Dziennikarstwo: analizy, technika, startupy, sledztwa, enterprise ---
+    {"name": "MIT Tech Review AI", "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed"},
+    {"name": "Ars Technica AI",    "url": "https://arstechnica.com/ai/feed/"},
+    {"name": "TechCrunch AI",      "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
+    {"name": "404 Media",          "url": "https://www.404media.co/rss/"},
+    {"name": "IEEE Spectrum AI",   "url": "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss"},
+    {"name": "The Register AI/ML", "url": "https://www.theregister.com/software/ai_ml/headlines.atom"},
+    {"name": "Wired AI",           "url": "https://www.wired.com/feed/tag/ai/latest/rss"},
+    # --- Newslettery ML (kuratorowany przeglad najwazniejszego) ---
     {"name": "The Batch",          "url": "https://www.deeplearning.ai/the-batch/feed/"},
     {"name": "Import AI",          "url": "https://importai.substack.com/feed"},
-    {"name": "The Decoder",        "url": "https://the-decoder.com/feed/"},
-    {"name": "TechCrunch AI",      "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
-    {"name": "VentureBeat AI",     "url": "https://venturebeat.com/category/ai/feed/"},
-    {"name": "The Verge AI",       "url": "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml"},
-    {"name": "Wired AI",           "url": "https://www.wired.com/feed/tag/ai/latest/rss"},
-    {"name": "Ars Technica AI",    "url": "https://arstechnica.com/ai/feed/"},
-    {"name": "MIT Tech Review AI", "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed"},
-    {"name": "Simon Willison",     "url": "https://simonwillison.net/atom/everything/"},
+    # --- Spolecznosc / agregator ---
     {"name": "Hacker News (front)","url": "https://hnrss.org/frontpage?points=100"},
-    {"name": "r/LocalLLaMA",       "url": "https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day"},
-    # --- Badania / papers (uwzglednij wybiorczo, opisuj przystepnie) ---
-    {"name": "arXiv cs.AI",        "url": "http://export.arxiv.org/rss/cs.AI"},
-    {"name": "arXiv cs.LG",        "url": "http://export.arxiv.org/rss/cs.LG"},
-    {"name": "arXiv cs.CL",        "url": "http://export.arxiv.org/rss/cs.CL"},
-    {"name": "Google Research",    "url": "https://research.google/blog/rss/"},
-    {"name": "BAIR (Berkeley)",    "url": "https://bair.berkeley.edu/blog/feed.xml"},
 ]
 
 USER_AGENT = "Mozilla/5.0 (compatible; DailyAIDigestBot/1.0; +https://example.com)"
