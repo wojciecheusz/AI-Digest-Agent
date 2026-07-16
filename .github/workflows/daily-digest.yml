@@ -1,10 +1,17 @@
 name: Dzienna pigułka AI
 
-# Uruchamia sie codziennie oraz na zadanie (przycisk "Run workflow").
+# Wyzwalacze:
+#  - schedule: codzienny bieg (UWAGA: GitHub uruchamia cron TYLKO z galezi domyslnej = main),
+#              publikuje na kanal AI_DIGEST.
+#  - push na 'production': po kazdym wypchnieciu poprawek publikuje na prywatny kanal.
+#  - workflow_dispatch: reczne uruchomienie z wyborem galezi ("Run workflow").
 on:
   schedule:
     - cron: "17 7 * * *"
       timezone: "Europe/Warsaw"   # = 7:17 czasu warszawskiego przez cały rok
+  push:
+    branches:
+      - production
   workflow_dispatch: {}
 
 jobs:
@@ -24,10 +31,24 @@ jobs:
       - name: Zainstaluj zaleznosci
         run: pip install -r requirements.txt
 
+      # Zabezpieczenie: na galezi production wymagamy osobnego sekretu,
+      # zeby digest z poprawek nigdy nie trafil przypadkiem na AI_DIGEST.
+      - name: Sprawdz konfiguracje kanalu (production)
+        if: github.ref_name == 'production'
+        env:
+          PROD_HOOK: ${{ secrets.SLACK_WEBHOOK_URL_PRODUCTION }}
+        run: |
+          if [ -z "$PROD_HOOK" ]; then
+            echo "::error::Brak sekretu SLACK_WEBHOOK_URL_PRODUCTION. Ustaw go w Settings > Secrets and variables > Actions, inaczej digest z production trafilby na AI_DIGEST."
+            exit 1
+          fi
+
       - name: Wyslij pigulke
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Na galezi 'production' publikuj na prywatny kanal, w kazdym innym
+          # przypadku (main / harmonogram) na AI_DIGEST.
+          SLACK_WEBHOOK_URL: ${{ github.ref_name == 'production' && secrets.SLACK_WEBHOOK_URL_PRODUCTION || secrets.SLACK_WEBHOOK_URL }}
           DIGEST_LANGUAGE: "polski"
           LOOKBACK_HOURS: "24"
           OPENAI_MODEL: "gpt-5.5"
